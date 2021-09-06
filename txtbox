@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+
+## Usage:
+# txtbox 3235337704
+# TODO: verify readonly
+# TODO: verify sqlite3 on path
+# TODO: verify db access
+# TODO: add support for exporting non iMessage chats (e.g. SMS)
+
+def query(q)
+    cmd = %Q{ sqlite3 -readonly "file://$HOME/Library/Messages/chat.db" "#{q}" }
+    `#{cmd}`
+end
+
+def read_args_or_exit
+    # TODO: validate
+    phone = ARGV.shift
+    if phone.nil?
+        puts <<~EOF
+            please provide a phone number
+        EOF
+        exit 1
+    end
+    phone
+end
+
+def find_handle_ids_for_phone_num(phone)
+    # I've found that a single phone number can have multiple handles registered,
+    # one per service (e.g. iMessage, SMS). For now I'm limiting to iMessage so that
+    # I don't have to merge multiple chats.
+    out = query "select rowid from handle where service = 'iMessage' and id = '#{phone}' limit 1;"
+
+    if out.nil? || out.empty?
+        puts <<~EOF
+            unable to find any handles associated with #{phone}
+        EOF
+        exit 1
+    end
+
+    out
+end
+
+puts "welcome to txtbox..."
+puts
+
+phone = read_args_or_exit
+puts "fetching handle ids for phone #: #{phone}"
+puts
+
+handle_ids = find_handle_ids_for_phone_num(phone)
+puts handle_ids
