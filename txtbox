@@ -1,27 +1,55 @@
 #!/usr/bin/env ruby
 
+require 'optparse'
+require 'csv'
+
 ## Usage:
 # txtbox 3235337704
 # TODO: verify readonly
 # TODO: verify sqlite3 on path
 # TODO: verify db access
+# TODO: README (include info on which OS this was tested on)
+# TODO: threads
+# TODO: attachments? (possible limitation - only fetches cached attachments)
+# TODO: current query method will probably interleave messages from group chats. needs join on chats
+# TODO: consider adding support for group chats
 # TODO: add support for exporting non iMessage chats (e.g. SMS)
 
-def query(q)
-    cmd = %Q{ sqlite3 -readonly "file://$HOME/Library/Messages/chat.db" "#{q}" }
-    `#{cmd}`
+@debug_is_on = false
+
+
+def parse_args!
+    options = {}
+    OptionParser.new do |opts|
+    opts.banner = "Usage: example.rb [options]"
+
+    opts.on("-d", "--debug", "Enable debug logging") do
+        options[:debug] = true
+    end
+    end.parse!
+
+    @debug_is_on = options[:debug]
+
+    phone = read_argv_or_exit!
 end
 
-def read_args_or_exit
+def error!(msg)
+    puts "error: #{msg}" and exit 1
+end
+
+def read_argv_or_exit!
     # TODO: validate
     phone = ARGV.shift
     if phone.nil?
-        puts <<~EOF
-            please provide a phone number
-        EOF
-        exit 1
+        error! "please provide a phone number"
     end
+
     phone
+end
+
+def query(q)
+    cmd = %Q{ sqlite3 -readonly -csv "file://$HOME/Library/Messages/chat.db" "#{q}" }
+    `#{cmd}`
 end
 
 def find_handle_ids_for_phone_num(phone)
@@ -31,21 +59,66 @@ def find_handle_ids_for_phone_num(phone)
     out = query "select rowid from handle where service = 'iMessage' and id = '#{phone}' limit 1;"
 
     if out.nil? || out.empty?
-        puts <<~EOF
-            unable to find any handles associated with #{phone}
-        EOF
-        exit 1
+        error! "unable to find any handles associated with #{phone}"
     end
 
-    out
+    out.strip
+end
+
+def count_messages_with_handle(handle_id)
+    result = query "select count(*) from message where handle_id = '#{handle_id}'"
+    result.strip
+end
+
+# NOTE: this approach will probably fetch _all_ messages sent to or received from the handle. This means direct messages
+#       will be interleaved with group messages (i think)
+def get_messages_with_handle_as_csv(handle_id)
+    message_csv_str = query <<~EOF
+        select datetime(message.date/1000000000 + strftime('%s', '2001-01-01'), 'unixepoch', 'localtime'),
+               is_from_me,
+               text
+        from message
+        where handle_id = '#{handle_id}'
+        order by date asc;
+    EOF
+
+    csv = CSV.new(message_csv_str)
+end
+
+def debug(msg)
+    @debug_is_on and puts "debug: #{msg}"
 end
 
 puts "welcome to txtbox..."
 puts
 
-phone = read_args_or_exit
-puts "fetching handle ids for phone #: #{phone}"
-puts
+phone = parse_args!
+debug "fetching handle ids for phone #: #{phone}"
 
-handle_ids = find_handle_ids_for_phone_num(phone)
-puts handle_ids
+handle_id = find_handle_ids_for_phone_num(phone)
+debug "found handle_id: #{handle_id}"
+
+count = count_messages_with_handle(handle_id)
+
+puts "found #{count} messages with #{phone}"
+
+messages = get_messages_with_handle_as_csv(handle_id)
+
+messages.each do |msg|
+    p msg
+    break
+end
+
+## exploring earliest available data (seems to be June 2017 for me)
+# puts query <<~EOF 
+#     select datetime(date/1000000000 + strftime('%s', '2001-01-01'), 'unixepoch', 'localtime'),
+#            handle_id,
+#            is_from_me,
+#            text
+#     from message
+#     order by date asc
+#     limit 100;
+# EOF
+
+puts
+puts "goodbye"
